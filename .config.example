@@ -1,0 +1,21 @@
+### PATHS
+# Location of folder containing baseline flyway migrations
+NT_FLYWAY_LOCATIONS="filesystem:${SCRIPT_PATH}/../db/sql";
+
+# Location of database test data
+NT_DB_TEST_DATA_PATH="${PWD}/db_test_data";
+
+# Location of newman test groups
+NT_NEWMAN_GROUPS_PATH="${PWD}/tests";
+
+# Location of the projects postman globals file
+NT_GLOBAL_ENV_JSON="${PWD}/project_globals_config.postman_globals.json";
+
+
+### FLYWAY CONFIG
+# Set the database config
+NT_FLYWAY_URL=jdbc:postgresql://localhost:12345
+NT_FLYWAY_USER=my_user
+NT_FLYWAY_PASS=my_password
+NT_FLYWAY_SCHEMAS=automated_testing
+

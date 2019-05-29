@@ -1,0 +1,554 @@
+#!/bin/bash
+#
+# This script executes a single collection or all collections in a folder.
+#
+
+
+SCRIPT_PATH=$( realpath $( dirname ${BASH_SOURCE[0]} ) );
+
+
+
+#       /$$$$$$   /$$$$$$  /$$   /$$ /$$$$$$$$ /$$$$$$  /$$$$$$  /$$   /$$ /$$$$$$$  /$$$$$$$$
+#      /$$__  $$ /$$__  $$| $$$ | $$| $$_____/|_  $$_/ /$$__  $$| $$  | $$| $$__  $$| $$_____/
+#     | $$  \__/| $$  \ $$| $$$$| $$| $$        | $$  | $$  \__/| $$  | $$| $$  \ $$| $$
+#     | $$      | $$  | $$| $$ $$ $$| $$$$$     | $$  | $$ /$$$$| $$  | $$| $$$$$$$/| $$$$$
+#     | $$      | $$  | $$| $$  $$$$| $$__/     | $$  | $$|_  $$| $$  | $$| $$__  $$| $$__/
+#     | $$    $$| $$  | $$| $$\  $$$| $$        | $$  | $$  \ $$| $$  | $$| $$  \ $$| $$
+#     |  $$$$$$/|  $$$$$$/| $$ \  $$| $$       /$$$$$$|  $$$$$$/|  $$$$$$/| $$  | $$| $$$$$$$$
+#      \______/  \______/ |__/  \__/|__/      |______/ \______/  \______/ |__/  |__/|________/
+#
+#
+##############################################################################################
+
+# Set current directory
+NEWMAN_TESTS_DIR="${PWD}";
+
+# Config env file
+ENV_FILE="${NEWMAN_TESTS_DIR}/.config";
+
+# Set Colours
+CHEAD="\e[93m";
+CPATCH="\e[92m";
+CLBLUE="\e[94m";
+CLMAG="\e[95m";
+CLRED="\e[91m";
+CLGREEN="\e[92m";
+CMODIFIED="\e[1;94m"; # M Light Blue (bold)
+CUNTRACKED="\e[1;4;95m"; # ? Light Mag (bold underlined)
+CMISSING="\e[1;4;36m"; # ! Cyan (bold underlined)
+CREMOVED="\e[1;91m"; # R Light Red (bold)
+CADDED="\e[1;92m"; # A Light Green (bold)
+CNORM="\e[0m";
+
+# Set default reporter
+REPORTERS="cli";
+IGNORE_REDIRECTS="";
+
+# Set no exit on fail as default
+EXIT_ON_FAIL="false";
+
+
+# Ensure the newman cli is installed
+if [[ -z $(which newman) ]]; then
+    echo "You do not have newman installed!";
+    echo "First install newman, then run this script again";
+    echo
+    exit 1;
+fi
+
+
+# Read the configured variables from the env file
+if [[ ! -e ${ENV_FILE} ]]; then
+    echo "You are missing your environment file - ${ENV_FILE}";
+    echo "Create this first then run this script again";
+    echo 
+    echo "For an example see ${SCRIPT_PATH}/.config.example";
+    echo
+    exit 1;
+fi
+source ${ENV_FILE};
+
+# Set the default flyway connection command
+FLYWAY_CMD="flyway -url=${NT_FLYWAY_URL} -user=${NT_FLYWAY_USER} -password=${NT_FLYWAY_PASS} -schemas=${NT_FLYWAY_SCHEMAS}";
+
+##############################################################################################
+
+
+
+function __show_help {
+    echo "
+Usage:      nt-run [OPTIONS] {FOLDER|COLLECTION}
+
+Options:
+             --help                                     -       Display this help message
+             --all                                      -       Run all available collections
+             --insecure                                 -       Run newman tests with the insecure flag
+             --exit-on-fail                             -       Exit on first failure
+             --list-collections                         -       List all available collections
+             --list-groups                              -       List all available newman groups
+             --location=<string>                        -       Execute the collection(s) at location. This can be a single collections or a newman group
+             --teamcity                                 -       Add teamcity logging to test results
+
+Examples:
+             \"nt-run --all\"                             -       Will execute all tests
+
+    ";
+}
+
+function __print_title_header {
+    title="${1}";
+    info="${2}";
+    edge=$(echo "$title" | sed 's/./#/g')
+    echo -ne "${CLBLUE}";
+    echo 
+    echo "##################################################################################";
+    echo "###                                                                            ###";
+    echo '###     /$$$$$$$   /$$$$$$  /$$  /$$  /$$ /$$$$$$/$$$$   /$$$$$$  /$$$$$$$     ###';
+    echo '###    | $$__  $$ /$$__  $$| $$ | $$ | $$| $$_  $$_  $$ |____  $$| $$__  $$    ###';
+    echo '###    | $$  \ $$| $$$$$$$$| $$ | $$ | $$| $$ \ $$ \ $$  /$$$$$$$| $$  \ $$    ###';
+    echo '###    | $$  | $$| $$_____/| $$ | $$ | $$| $$ | $$ | $$ /$$__  $$| $$  | $$    ###';
+    echo '###    | $$  | $$|  $$$$$$$|  $$$$$/$$$$/| $$ | $$ | $$|  $$$$$$$| $$  | $$    ###';
+    echo '###    |__/  |__/ \_______/ \_____/\___/ |__/ |__/ |__/ \_______/|__/  |__/    ###';
+    echo "###                                                                            ###";
+    echo "###"
+    echo "###  ######################################################################";
+    echo "###";
+    echo "###     ${title}";
+    echo "###";
+    echo "###";
+    echo "###     ${info}";
+    echo 
+    echo -ne "${CNORM}";
+}
+
+function __print_stage_header {
+    echo -ne "${CHEAD}";
+    echo
+    echo "############################################################";
+    echo "###";
+    echo "###  ${1}";
+    echo "###";
+    echo
+    echo -ne "${CNORM}";
+}
+
+function __print_stage_success_done {
+    echo -ne "${CLGREEN}";
+    echo
+    echo "      |Done|"
+    echo
+    echo -ne "${CNORM}";
+}
+
+function __throw_exception {
+    # TODO: Add TC syntax to here also
+    echo
+    echo -ne "${CLRED}";
+    echo
+    echo "      |Failed|"
+    echo
+    echo "+--------------------------------------------------------------+"
+    echo "|                                                              |"
+    printf "|`tput bold` %-60s `tput sgr0`${CLRED}|\n" "Exception thrown: "
+    echo "|                                                              |"
+    printf "| %-60s ${CLRED}|\n" "        $@"
+    echo "|                                                              |"
+    echo "+--------------------------------------------------------------+"
+    echo -ne "${CNORM}";
+    echo
+    exit 1;
+}
+
+function __test_command_result {
+    res=${1}
+    message=${2}
+    if [[ $res -eq 130 ]]; then
+        # User hit ctl+c, exit here
+        echo "Tests terminated.";
+        exit 130;
+    fi
+    if [[ ! $res -eq 0 ]]; then
+        # Test threw error. Throw exception with configured error message
+        __throw_exception "${message}";
+    fi
+}
+
+function __get_newman_collection_groups {
+    echo
+    COLLECTION_GROUP_ARRAY=()
+    for item in $(find ${NT_NEWMAN_GROUPS_PATH} -name "*postman_collection.json" -type f | tac); do
+        collection_dir=$(basename $(dirname "$item" ));
+        if [[ ! " ${COLLECTION_GROUP_ARRAY[@]} " =~ " ${collection_dir} " ]]; then
+            COLLECTION_GROUP_ARRAY+=("${collection_dir}")
+            echo "                    ${collection_dir}"
+        fi
+    done
+    #echo "${COLLECTION_GROUP_ARRAY[@]}";
+}
+
+function __get_newman_tests_list {
+    extensions="";
+    for item in $(find ${NT_NEWMAN_GROUPS_PATH} -name "*postman_collection.json" -type f | tac); do
+        directory=$(basename $(dirname "$item" ));
+        item=$( basename $(echo $item | sed 's/\.postman_collection.json$//') );
+        extensions="${extensions} 
+            ${directory}/${item}"
+    done
+    echo "${extensions}";
+}
+
+
+# Migrate clean databse
+flyway_clean_deploy() {
+    # Deploy a fresh DB
+    echo
+    __print_stage_header "Deploy clean database with Flyway...";
+    echo
+    #cd ${DB_PATH};
+
+    # Disable protection preventing cleaning of whole database
+    echo "  - Allow Flyway to destroy all data..."
+    export FLYWAY_CLEAN_DISABLED=false;
+    __print_stage_success_done;
+
+    # Specify location of schemas
+    echo "  - Set default Flyway schema location..."
+    #export FLYWAY_LOCATIONS=filesystem:sql;
+    export FLYWAY_LOCATIONS=${NT_FLYWAY_LOCATIONS};
+    __print_stage_success_done;
+
+    # Run clean and fresh migration
+    echo "  - Execute Flyway clean..."
+    ${FLYWAY_CMD} -q clean &>/dev/null;
+    __test_command_result $? "Unable to run the flyway migration";
+    __print_stage_success_done;
+    echo "  - Execute Flyway migrate..."
+    ${FLYWAY_CMD} -q migrate;
+    __test_command_result $? "Unable to run the flyway migration";
+    __print_stage_success_done;
+
+    # Restore protection preventing cleaning of whole database
+    echo "  - Disable Flyway's ability to destroy all data..."
+    export FLYWAY_CLEAN_DISABLED=true;
+    __print_stage_success_done;
+
+    # Print out data on the current state of the database
+    echo "  - Show current database state..."
+    ${FLYWAY_CMD} info 2>/dev/null;
+    __test_command_result $? "Unable to run the flyway info";
+    __print_stage_success_done;
+
+    cd ${NEWMAN_TESTS_DIR};
+}
+
+# Migrate test data
+flyway_install_test_data() {
+    # Deploy a fresh DB
+    echo
+    __print_stage_header "Update database with testdata using Flyway...";
+    echo
+    cd ${NT_DB_TEST_DATA_PATH};
+
+    TMP_MIGRATIONS_PATH=${NT_DB_TEST_DATA_PATH}/tmp_migrations;
+
+    mkdir -p ${TMP_MIGRATIONS_PATH};
+
+    # Add our list of schema changes
+    i=1
+    for SQL_FILE in ${1}; do
+        echo "  - Adding '${SQL_FILE}' Test Data..."
+        echo
+        cp -f ${NT_DB_TEST_DATA_PATH}/${SQL_FILE} ${TMP_MIGRATIONS_PATH}/R__${i}_TEST_DATA_${SQL_FILE};
+        if [[ $? -eq 1 ]]; then
+            __throw_exception "Unable to find test data - ${SQL_FILE}";
+        fi
+        __print_stage_success_done;
+        ((i++))
+    done
+    # Specify location of schema
+    echo "  - Set Flyway schema location to include test data migrations..."
+    export FLYWAY_LOCATIONS=${NT_FLYWAY_LOCATIONS},filesystem:${TMP_MIGRATIONS_PATH};
+    __print_stage_success_done;
+
+    # Run migration
+    echo "  - Execute Flyway migrate..."
+    ${FLYWAY_CMD} -q migrate;
+    __test_command_result $? "Unable to run the flyway migration";
+    __print_stage_success_done;
+
+    # Print out data on the current state of the database
+    echo "  - Show current database state..."
+    ${FLYWAY_CMD} info;
+    __test_command_result $? "Unable to run the flyway info command";
+    __print_stage_success_done;
+
+    # Cleanup all temp migrations
+    echo "  - Cleaning Up Test Data Migration Files..."
+    echo
+    rm -rfv ${TMP_MIGRATIONS_PATH};
+
+    cd ${NEWMAN_TESTS_DIR};
+}
+
+configure_testdata() {
+    newman_group_config_file=${1};
+    IGNORE_REDIRECTS="";
+    if [[ -e "${newman_group_config_file}" ]]; then
+        # Read db config - check if we need to clean the database
+        if [[ $(cat ${newman_group_config_file} | jq -c '.database.clean_database_before_running_the_collections_in_this_group' | tr -d '"' | tr '[:upper:]' '[:lower:]') == 'true' ]]; then
+            flyway_clean_deploy;
+        fi
+        # Read db config and pull out list of db
+        testdata_scripts="$(cat ${newman_group_config_file} | jq -c '.database.test_data[]' | tr -d '"')";
+        if [[ ! -z ${testdata_scripts} ]]; then
+            flyway_install_test_data "${testdata_scripts}";
+        fi
+    fi
+}
+
+get_command_args() {
+    newman_group_config_file=${1};
+    command_args="$([ "${RUN_INSECURE}" == true ] && echo "--insecure" || echo "") --globals $(realpath ${NT_GLOBAL_ENV_JSON}) --reporters ${REPORTERS}";
+    if [[ -e "${newman_group_config_file}" ]]; then
+        # Read newman command config
+        if [[ $(cat ${newman_group_config_file} | jq -c '.ignore_redirects' | tr -d '"' | tr '[:upper:]' '[:lower:]') == 'true' ]]; then
+            command_args="${command_args} --ignore-redirects";
+        fi
+    fi
+    echo "${command_args}";
+}
+
+newman_run() {
+    collection_path=${1};
+    command_args=${2};
+    cwd=${PWD};
+    dir_name=$(dirname "${collection_path}");
+    collection_name=$( basename $(echo ${collection_path} | sed 's/\.postman_collection.json$//') );
+    echo
+    __print_stage_header "Executing newman collection ${collection_name}...";
+    echo
+
+    # Execute tests
+    newman_command="newman run ${collection_path} ${command_args}";
+    echo "  - Command:"
+    echo "         $ ${newman_command}";
+    echo 
+    cd ${dir_name};
+    echo $PWD
+    ${newman_command};
+    res=$?
+    if [[ $res -eq 130 ]]; then
+        __test_command_result 130;
+    fi
+    if [[ ! $res -eq 0 ]]; then
+        if [[ ${EXIT_ON_FAIL} == 'true' ]]; then
+            __test_command_result $res "Newman test failed - ${collection_name}";
+        fi
+    fi
+    cd ${cwd};
+    __print_stage_success_done;
+}
+
+run_single_collection() {
+    ### Execute a single newman collection
+    # This function carries out the following
+    #  - Configures the database (if required) for the selected test 
+    #  - Includes an environment file if one exists with the same name as the collection file
+    collection_path=${1};
+    dir_name=$(dirname "${collection_path}");
+
+    # Init the database as per this collections category's newman_group config (also clean if required)
+    newman_group_config_file=${dir_name}/newman_group.config.json;
+    configure_testdata "${newman_group_config_file}";
+
+    # Build newman command args
+    command_args="$(get_command_args ${newman_group_config_file})";
+
+
+    # Append any environment files if available
+    collection_env_file="$(echo $collection_path | sed 's/\.postman_collection.json$//').postman_environment.json";
+    if [[ -e ${collection_env_file} ]]; then
+        command_args="--environment $(realpath ${collection_env_file}) ${command_args}"
+    fi
+
+    # Execute tests
+    newman_run "${collection_path}" "${command_args}";
+    echo
+}
+
+run_all_collections_in_location() {
+    ### Execute a group of newman collections from a folder
+    # This function carries out the following
+    #  - Parses a folder for all collections
+    #  - Configures the database (if required) for the selected tests
+    #  - Executes each collection including an environment file if one exists with the same name as the collection file
+    dir_name=${1};
+
+    # Init the database as per this collections category's newman_group config (also clean if required)
+    newman_group_config_file=${dir_name}/newman_group.config.json
+    configure_testdata "${newman_group_config_file}";
+
+    # Execute tests in order:
+    # If a collections_cfg.json file exists, read the order form that file
+    # Otherwise run it in alphanumeric order
+    echo $dir_name
+    for collection_path in $(find ${dir_name} -name "*postman_collection.json" -type f | tac); do
+        # Build newman command args
+        command_args="$(get_command_args ${newman_group_config_file})";
+
+        # Set the path to the collection file as an absolute path
+        collection_path=$(realpath ${collection_path});
+
+        # Append any environment files if available
+        collection_env_file="$(echo $collection_path | sed 's/\.postman_collection.json$//').postman_environment.json";
+        if [[ -e ${collection_env_file} ]]; then
+            command_args="--environment $(realpath ${collection_env_file}) ${command_args}"
+        fi
+
+        # Execute tests
+        echo newman_run "${collection_path}" "${command_args}";
+        newman_run "${collection_path}" "${command_args}";
+        echo
+    done
+    echo
+}
+
+select_from_list() {
+    conf_array='';
+    # List all tests
+    echo
+    i=1
+    k=0
+    # Fetch all newman tests
+    echo
+    echo "Available NEWMAN collections:";
+    echo
+    for collection in $(__get_newman_tests_list); do
+        collection_path=${NEWMAN_TESTS_DIR}/tests/${collection}.postman_collection.json;
+        if [[ -f "${collection_path}" ]]; then
+            echo "      ${i}) ${collection}";
+            conf_array[ $k ]="${collection}.postman_collection.json" 
+        fi
+        ((i++))
+        ((k++))
+    done
+    echo
+    if [[ ${conf_array} ]]; then # Only show if list not empty
+        echo
+        read -p "Select a collection from the list above: " menu
+        numbers='^[0-9]+$'
+        if [[ "${menu}" -le "${#conf_array[@]}" && ${menu} =~ ${numbers} && "${menu}" != "0" ]]; then
+            (( menu-- ))
+            selected_test=${conf_array[${menu}]}
+            echo; echo "Running ${selected_test}...";
+        else
+            echo; echo "That was not a valid selection."; echo "No test will run.";
+            exit 1
+        fi
+    else
+        echo "No tests were found."; echo "No test will run.";
+    fi
+    TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${selected_test};
+    echo
+
+    ### Run a single test
+    __print_title_header "Running single test collection" "
+            Collection File:
+                ${TEST_LOCATION}
+    ";
+    run_single_collection "${TEST_LOCATION}";
+    echo
+    exit 0;
+}
+
+
+
+### Parse args
+for ARG in ${@}; do
+    if [[ "${ARG}" == "--help" ]]; then
+        __show_help;
+        echo
+        exit 0;
+    fi
+    if [[ "${ARG}" == "--list-groups" ]]; then
+        # list out available tests
+        echo "Available newman groups:";
+        __get_newman_collection_groups;
+        echo
+        exit 0;
+    fi
+    if [[ "${ARG}" == "--list-collections" ]]; then
+        # list out available tests
+        echo "Available newman collections:";
+        __get_newman_tests_list;
+        echo
+        exit 0;
+    fi
+    if [[ "${ARG}" == "--teamcity" ]]; then
+        REPORTERS="${REPORTERS},teamcity";
+        continue;
+    fi
+    if [[ "${ARG}" == "--all" ]]; then
+        RUN_ALL="true";
+        continue;
+    fi
+    if [[ "${ARG}" == "--insecure" ]]; then
+        RUN_INSECURE="true";
+        continue;
+    fi
+    if [[ "${ARG}" == "--exit-on-fail" ]]; then
+        EXIT_ON_FAIL="true";
+        continue;
+    fi
+    if [[ "${ARG}" =~ "--location" ]]; then
+        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/$(echo ${ARG} | awk -F'=' '{print $2}');
+        continue;
+    fi
+    if [[ -f ${NT_NEWMAN_GROUPS_PATH}/${ARG} ]]; then
+        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${ARG};
+        continue;
+    fi
+    if [[ -d ${NT_NEWMAN_GROUPS_PATH}/${ARG} ]]; then
+        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${ARG};
+        continue;
+    fi
+    echo
+    echo "Unsure how to handle argument: '${ARG}'"
+    echo "It will be ignored..."
+done
+
+if [[ ${RUN_ALL} ]]; then
+    all_test_groups=$(__get_newman_collection_groups);
+    __print_title_header "Running all tests" "
+                Groups:${all_test_groups}
+    ";
+    for collection_path in ${all_test_groups}; do
+        # Run this collection group together
+        run_all_collections_in_location "${NT_NEWMAN_GROUPS_PATH}/${collection_path}";
+    done
+    echo
+    exit 0;
+else
+    if [[ -f ${TEST_LOCATION} ]]; then
+        __print_title_header "Running single test collection" "
+                Collection File:
+                    ${TEST_LOCATION}
+        ";
+        run_single_collection "${TEST_LOCATION}";
+        echo
+        exit 0;
+    fi
+    if [[ -d ${TEST_LOCATION} ]]; then
+        __print_title_header "Running all tests in folder" "
+                Folder Location:
+                    ${TEST_LOCATION}
+        ";
+        run_all_collections_in_location "${TEST_LOCATION}";
+        echo
+        exit 0;
+    fi
+fi
+
+
+# Select a single collection to run from a list
+select_from_list;
