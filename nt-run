@@ -379,23 +379,32 @@ run_single_collection() {
     echo
 }
 
-run_all_collections_in_location() {
+run_collections_in_location() {
     ### Execute a group of newman collections from a folder
     # This function carries out the following
     #  - Parses a folder for all collections
     #  - Configures the database (if required) for the selected tests
     #  - Executes each collection including an environment file if one exists with the same name as the collection file
     dir_name=${1};
+    filter="${2}";
+
+    if [ -z "$filter" ]; then
+        tests_to_run="$(find ${dir_name} -name "*.postman_collection.json" -type f | tac)"
+    else
+        tests_to_run="$(find ${dir_name} -name "*.postman_collection.json" -type f | grep "$filter" | tac)"
+
+        if [ -z "$tests_to_run" ]; then
+            return
+        fi
+    fi
 
     # Init the database as per this collections category's newman_group config (also clean if required)
     newman_group_config_file=${dir_name}/newman_group.config.json
     configure_testdata "${newman_group_config_file}";
 
     # Execute tests in order:
-    # If a collections_cfg.json file exists, read the order form that file
-    # Otherwise run it in alphanumeric order
     echo $dir_name
-    for collection_path in $(find ${dir_name} -name "*postman_collection.json" -type f | tac); do
+    for collection_path in $tests_to_run; do
         # Build newman command args
         command_args="$(get_command_args ${newman_group_config_file})";
 
@@ -506,6 +515,13 @@ while [ $# -gt 0 ]; do
         --location=*)
             TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/$(echo ${1} | awk -F'=' '{print $2}');
             ;;
+        --filter)
+            FILTER="$2"
+            shift
+            ;;
+        --filter=*)
+            FILTER="$(echo ${1} | awk -F'=' '{print $2}')"
+            ;;
         *)
             if [[ -f ${NT_NEWMAN_GROUPS_PATH}/${1} ]]; then
                 TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${1};
@@ -522,14 +538,26 @@ while [ $# -gt 0 ]; do
     shift;
 done
 
-if [[ ${RUN_ALL} ]]; then
-    all_test_groups=$(__get_newman_collection_groups);
-    __print_title_header "Running all tests" "
-                Groups:${all_test_groups}
-    ";
-    for collection_path in ${all_test_groups}; do
+if ! [[ -z "$FILTER" ]] || ! [[ -z "$RUN_ALL" ]]; then
+    if ! [[ -z "${RUN_ALL}" ]]; then
+        FILTER=
+    fi
+
+    test_groups=$(__get_newman_collection_groups);
+
+    if [ -z "$FILTER" ]; then
+        __print_title_header "Running all tests" "
+                Groups:${test_groups}
+        ";
+    else
+        __print_title_header "Running tests matching '$FILTER' in these groups:" "
+                Groups:${test_groups}
+        ";
+    fi
+
+    for collection_path in ${test_groups}; do
         # Run this collection group together
-        run_all_collections_in_location "${NT_NEWMAN_GROUPS_PATH}/${collection_path}";
+        run_collections_in_location "${NT_NEWMAN_GROUPS_PATH}/${collection_path}" "$FILTER";
     done
     echo
     exit 0;
@@ -548,7 +576,7 @@ else
                 Folder Location:
                     ${TEST_LOCATION}
         ";
-        run_all_collections_in_location "${TEST_LOCATION}";
+        run_collections_in_location "${TEST_LOCATION}";
         echo
         exit 0;
     fi
