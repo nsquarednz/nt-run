@@ -247,7 +247,6 @@ flyway_install_test_data() {
     echo
     __print_stage_header "Update database with testdata using Flyway...";
     echo
-    cd ${NT_DB_TEST_DATA_PATH};
 
     TMP_MIGRATIONS_PATH=${NT_DB_TEST_DATA_PATH}/tmp_migrations;
 
@@ -333,8 +332,6 @@ newman_run() {
     echo "  - Command:"
     echo "         $ ${newman_command}";
     echo 
-    cd ${dir_name};
-    echo $PWD
     ${newman_command};
     res=$?
     if [[ $res -eq 130 ]]; then
