@@ -249,9 +249,12 @@ flyway_install_test_data() {
     echo
     cd ${NT_DB_TEST_DATA_PATH};
 
-    TMP_MIGRATIONS_PATH=${NT_DB_TEST_DATA_PATH}/tmp_migrations;
+    TMP_MIGRATIONS_PATH=$(tempfile -s _nt-run_migrations)
+    rm $TMP_MIGRATIONS_PATH
+    mkdir $TMP_MIGRATIONS_PATH
 
-    mkdir -p ${TMP_MIGRATIONS_PATH};
+    echo "  - Migrations are in:" $TMP_MIGRATIONS_PATH
+    echo
 
     # Add our list of schema changes
     i=1
