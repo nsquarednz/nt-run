@@ -43,6 +43,7 @@ CNORM="\e[0m";
 # Set default reporter
 REPORTERS="cli";
 IGNORE_REDIRECTS="";
+JUNIT_PATH="";
 
 # Set no exit on fail as default
 EXIT_ON_FAIL="false";
@@ -312,6 +313,11 @@ configure_testdata() {
 get_command_args() {
     newman_group_config_file=${1};
     command_args="$([ "${RUN_INSECURE}" == true ] && echo "--insecure" || echo "") --globals $(realpath ${NT_GLOBAL_ENV_JSON}) --reporters ${REPORTERS}";
+
+    if ! [ -z "$JUNIT_PATH" ]; then
+        command_args="${command_args} --reporter-junit-export $JUNIT_PATH"
+    fi
+
     if [[ -e "${newman_group_config_file}" ]]; then
         # Read newman command config
         if [[ $(cat ${newman_group_config_file} | jq -c '.ignore_redirects' | tr -d '"' | tr '[:upper:]' '[:lower:]') == 'true' ]]; then
@@ -489,6 +495,16 @@ while [ $# -gt 0 ]; do
             ;;
         --teamcity)
             REPORTERS="${REPORTERS},teamcity";
+            ;;
+        --junit)
+            REPORTERS="${REPORTERS},junit";
+            ;;
+        --junit-path)
+            JUNIT_PATH="$2"
+            shift
+            ;;
+        --junit-path=*)
+            JUNIT_PATH="$(echo ${1} | awk -F'=' '{print $2}')";
             ;;
         --all)
             RUN_ALL="true";
