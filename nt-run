@@ -175,26 +175,29 @@ function __test_command_result {
 
 function __get_newman_collection_groups {
     echo
-    COLLECTION_GROUP_ARRAY=()
+    COLLECTION_GROUP_ARRAY=();
     for item in $(find ${NT_NEWMAN_GROUPS_PATH} -name "*postman_collection.json" -type f | tac); do
         collection_dir=$(basename $(dirname "$item" ));
         if [[ ! " ${COLLECTION_GROUP_ARRAY[@]} " =~ " ${collection_dir} " ]]; then
-            COLLECTION_GROUP_ARRAY+=("${collection_dir}")
-            echo "                    ${collection_dir}"
+            COLLECTION_GROUP_ARRAY+=("${collection_dir}");
         fi
     done
-    #echo "${COLLECTION_GROUP_ARRAY[@]}";
+    IFS=$'\n' sorted=($(sort <<<"${COLLECTION_GROUP_ARRAY[*]}"));
+    printf "            %s\n" "${sorted[@]}";
+    unset IFS;
 }
 
 function __get_newman_tests_list {
-    extensions="";
+    echo
+    COLLECTION_ARRAY=();
     for item in $(find ${NT_NEWMAN_GROUPS_PATH} -name "*postman_collection.json" -type f | tac); do
         directory=$(basename $(dirname "$item" ));
         item=$( basename $(echo $item | sed 's/\.postman_collection.json$//') );
-        extensions="${extensions} 
-            ${directory}/${item}"
+        COLLECTION_ARRAY+=("${directory}/${item}");
     done
-    echo "${extensions}";
+    IFS=$'\n' sorted=($(sort <<<"${COLLECTION_ARRAY[*]}"));
+    printf "            %s\n" "${sorted[@]}";
+    unset IFS;
 }
 
 
@@ -472,14 +475,14 @@ for ARG in ${@}; do
     fi
     if [[ "${ARG}" == "--list-groups" ]]; then
         # list out available tests
-        echo "Available newman groups:";
+        echo "Available NEWMAN groups:";
         __get_newman_collection_groups;
         echo
         exit 0;
     fi
     if [[ "${ARG}" == "--list-collections" ]]; then
         # list out available tests
-        echo "Available newman collections:";
+        echo "Available NEWMAN collections:";
         __get_newman_tests_list;
         echo
         exit 0;
