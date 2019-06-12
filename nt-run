@@ -375,6 +375,7 @@ run_single_collection() {
     fi
 
     # Execute tests
+    echo newman_run "${collection_path}" "${command_args}";
     newman_run "${collection_path}" "${command_args}";
     echo
 }
