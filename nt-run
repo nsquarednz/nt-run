@@ -43,6 +43,7 @@ CNORM="\e[0m";
 # Set default reporter
 REPORTERS="cli";
 IGNORE_REDIRECTS="";
+JUNIT_PATH="";
 
 # Set no exit on fail as default
 EXIT_ON_FAIL="false";
@@ -312,6 +313,11 @@ configure_testdata() {
 get_command_args() {
     newman_group_config_file=${1};
     command_args="$([ "${RUN_INSECURE}" == true ] && echo "--insecure" || echo "") --globals $(realpath ${NT_GLOBAL_ENV_JSON}) --reporters ${REPORTERS}";
+
+    if ! [ -z "$JUNIT_PATH" ]; then
+        command_args="${command_args} --reporter-junit-export $JUNIT_PATH"
+    fi
+
     if [[ -e "${newman_group_config_file}" ]]; then
         # Read newman command config
         if [[ $(cat ${newman_group_config_file} | jq -c '.ignore_redirects' | tr -d '"' | tr '[:upper:]' '[:lower:]') == 'true' ]]; then
@@ -465,59 +471,71 @@ select_from_list() {
 }
 
 
-
 ### Parse args
-for ARG in ${@}; do
-    if [[ "${ARG}" == "--help" ]]; then
-        __show_help;
-        echo
-        exit 0;
-    fi
-    if [[ "${ARG}" == "--list-groups" ]]; then
-        # list out available tests
-        echo "Available NEWMAN groups:";
-        __get_newman_collection_groups;
-        echo
-        exit 0;
-    fi
-    if [[ "${ARG}" == "--list-collections" ]]; then
-        # list out available tests
-        echo "Available NEWMAN collections:";
-        __get_newman_tests_list;
-        echo
-        exit 0;
-    fi
-    if [[ "${ARG}" == "--teamcity" ]]; then
-        REPORTERS="${REPORTERS},teamcity";
-        continue;
-    fi
-    if [[ "${ARG}" == "--all" ]]; then
-        RUN_ALL="true";
-        continue;
-    fi
-    if [[ "${ARG}" == "--insecure" ]]; then
-        RUN_INSECURE="true";
-        continue;
-    fi
-    if [[ "${ARG}" == "--exit-on-fail" ]]; then
-        EXIT_ON_FAIL="true";
-        continue;
-    fi
-    if [[ "${ARG}" =~ "--location" ]]; then
-        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/$(echo ${ARG} | awk -F'=' '{print $2}');
-        continue;
-    fi
-    if [[ -f ${NT_NEWMAN_GROUPS_PATH}/${ARG} ]]; then
-        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${ARG};
-        continue;
-    fi
-    if [[ -d ${NT_NEWMAN_GROUPS_PATH}/${ARG} ]]; then
-        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${ARG};
-        continue;
-    fi
-    echo
-    echo "Unsure how to handle argument: '${ARG}'"
-    echo "It will be ignored..."
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help)
+            __show_help;
+            echo
+            exit 0;
+            ;;
+        --list-groups)
+            # list out available tests
+            echo "Available NEWMAN groups:";
+            __get_newman_collection_groups;
+            echo
+            exit 0;
+            ;;
+        --list-collections)
+            # list out available tests
+            echo "Available NEWMAN collections:";
+            __get_newman_tests_list;
+            echo
+            exit 0;
+            ;;
+        --teamcity)
+            REPORTERS="${REPORTERS},teamcity";
+            ;;
+        --junit)
+            REPORTERS="${REPORTERS},junit";
+            ;;
+        --junit-path)
+            JUNIT_PATH="$2"
+            shift
+            ;;
+        --junit-path=*)
+            JUNIT_PATH="$(echo ${1} | awk -F'=' '{print $2}')";
+            ;;
+        --all)
+            RUN_ALL="true";
+            ;;
+        --insecure)
+            RUN_INSECURE="true";
+            ;;
+        --exit-on-fail)
+            EXIT_ON_FAIL="true";
+            ;;
+        --location)
+            TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/"$2"
+            shift
+            ;;
+        --location=*)
+            TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/$(echo ${1} | awk -F'=' '{print $2}');
+            ;;
+        *)
+            if [[ -f ${NT_NEWMAN_GROUPS_PATH}/${1} ]]; then
+                TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${1};
+            elif [[ -d ${NT_NEWMAN_GROUPS_PATH}/${1} ]]; then
+                TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${1};
+            else
+                echo
+                echo "Unsure how to handle argument: '${1}'"
+                echo "It will be ignored..."
+            fi
+            ;;
+    esac
+
+    shift;
 done
 
 if [[ ${RUN_ALL} ]]; then
