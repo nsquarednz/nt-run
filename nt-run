@@ -379,23 +379,32 @@ run_single_collection() {
     echo
 }
 
-run_all_collections_in_location() {
+run_collections_in_location() {
     ### Execute a group of newman collections from a folder
     # This function carries out the following
     #  - Parses a folder for all collections
     #  - Configures the database (if required) for the selected tests
     #  - Executes each collection including an environment file if one exists with the same name as the collection file
     dir_name=${1};
+    filter="${2}";
+
+    if [ -z "$filter" ]; then
+        tests_to_run="$(find ${dir_name} -name "*.postman_collection.json" -type f | tac)"
+    else
+        tests_to_run="$(find ${dir_name} -name "*.postman_collection.json" -type f | grep "$filter" | tac)"
+
+        if [ -z "$tests_to_run" ]; then
+            return
+        fi
+    fi
 
     # Init the database as per this collections category's newman_group config (also clean if required)
     newman_group_config_file=${dir_name}/newman_group.config.json
     configure_testdata "${newman_group_config_file}";
 
     # Execute tests in order:
-    # If a collections_cfg.json file exists, read the order form that file
-    # Otherwise run it in alphanumeric order
     echo $dir_name
-    for collection_path in $(find ${dir_name} -name "*postman_collection.json" -type f | tac); do
+    for collection_path in $tests_to_run; do
         # Build newman command args
         command_args="$(get_command_args ${newman_group_config_file})";
 
@@ -460,98 +469,107 @@ select_from_list() {
                 ${TEST_LOCATION}
     ";
     run_single_collection "${TEST_LOCATION}";
-    echo
-    exit 0;
 }
 
 
-
 ### Parse args
-for ARG in ${@}; do
-    if [[ "${ARG}" == "--help" ]]; then
-        __show_help;
-        echo
-        exit 0;
-    fi
-    if [[ "${ARG}" == "--list-groups" ]]; then
-        # list out available tests
-        echo "Available NEWMAN groups:";
-        __get_newman_collection_groups;
-        echo
-        exit 0;
-    fi
-    if [[ "${ARG}" == "--list-collections" ]]; then
-        # list out available tests
-        echo "Available NEWMAN collections:";
-        __get_newman_tests_list;
-        echo
-        exit 0;
-    fi
-    if [[ "${ARG}" == "--teamcity" ]]; then
-        REPORTERS="${REPORTERS},teamcity";
-        continue;
-    fi
-    if [[ "${ARG}" == "--all" ]]; then
-        RUN_ALL="true";
-        continue;
-    fi
-    if [[ "${ARG}" == "--insecure" ]]; then
-        RUN_INSECURE="true";
-        continue;
-    fi
-    if [[ "${ARG}" == "--exit-on-fail" ]]; then
-        EXIT_ON_FAIL="true";
-        continue;
-    fi
-    if [[ "${ARG}" =~ "--location" ]]; then
-        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/$(echo ${ARG} | awk -F'=' '{print $2}');
-        continue;
-    fi
-    if [[ -f ${NT_NEWMAN_GROUPS_PATH}/${ARG} ]]; then
-        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${ARG};
-        continue;
-    fi
-    if [[ -d ${NT_NEWMAN_GROUPS_PATH}/${ARG} ]]; then
-        TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${ARG};
-        continue;
-    fi
-    echo
-    echo "Unsure how to handle argument: '${ARG}'"
-    echo "It will be ignored..."
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help)
+            __show_help;
+            echo
+            exit 0;
+            ;;
+        --list-groups)
+            # list out available tests
+            echo "Available NEWMAN groups:";
+            __get_newman_collection_groups;
+            echo
+            exit 0;
+            ;;
+        --list-collections)
+            # list out available tests
+            echo "Available NEWMAN collections:";
+            __get_newman_tests_list;
+            echo
+            exit 0;
+            ;;
+        --teamcity)
+            REPORTERS="${REPORTERS},teamcity";
+            ;;
+        --all)
+            RUN_ALL="true";
+            ;;
+        --insecure)
+            RUN_INSECURE="true";
+            ;;
+        --exit-on-fail)
+            EXIT_ON_FAIL="true";
+            ;;
+        --location)
+            TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/"$2"
+            shift
+            ;;
+        --location=*)
+            TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/$(echo ${1} | awk -F'=' '{print $2}');
+            ;;
+        --filter)
+            FILTER="$2"
+            shift
+            ;;
+        --filter=*)
+            FILTER="$(echo ${1} | awk -F'=' '{print $2}')"
+            ;;
+        *)
+            if [[ -f ${NT_NEWMAN_GROUPS_PATH}/${1} ]]; then
+                TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${1};
+            elif [[ -d ${NT_NEWMAN_GROUPS_PATH}/${1} ]]; then
+                TEST_LOCATION=${NT_NEWMAN_GROUPS_PATH}/${1};
+            else
+                echo
+                echo "Unsure how to handle argument: '${1}'"
+                echo "It will be ignored..."
+            fi
+            ;;
+    esac
+
+    shift;
 done
 
-if [[ ${RUN_ALL} ]]; then
-    all_test_groups=$(__get_newman_collection_groups);
-    __print_title_header "Running all tests" "
-                Groups:${all_test_groups}
-    ";
-    for collection_path in ${all_test_groups}; do
+if ! [[ -z "$FILTER" ]] || ! [[ -z "$RUN_ALL" ]]; then
+    if ! [[ -z "${RUN_ALL}" ]]; then
+        FILTER=
+    fi
+
+    test_groups=$(__get_newman_collection_groups);
+
+    if [ -z "$FILTER" ]; then
+        __print_title_header "Running all tests" "
+                Groups:${test_groups}
+        ";
+    else
+        __print_title_header "Running tests matching '$FILTER' in these groups:" "
+                Groups:${test_groups}
+        ";
+    fi
+
+    for collection_path in ${test_groups}; do
         # Run this collection group together
-        run_all_collections_in_location "${NT_NEWMAN_GROUPS_PATH}/${collection_path}";
+        run_collections_in_location "${NT_NEWMAN_GROUPS_PATH}/${collection_path}" "$FILTER";
     done
-    echo
-    exit 0;
+elif [[ -f ${TEST_LOCATION} ]]; then
+    __print_title_header "Running single test collection" "
+            Collection File:
+                ${TEST_LOCATION}
+    ";
+    run_single_collection "${TEST_LOCATION}";
+elif [[ -d ${TEST_LOCATION} ]]; then
+    __print_title_header "Running all tests in folder" "
+            Folder Location:
+                ${TEST_LOCATION}
+    ";
+    run_collections_in_location "${TEST_LOCATION}";
 else
-    if [[ -f ${TEST_LOCATION} ]]; then
-        __print_title_header "Running single test collection" "
-                Collection File:
-                    ${TEST_LOCATION}
-        ";
-        run_single_collection "${TEST_LOCATION}";
-        echo
-        exit 0;
-    fi
-    if [[ -d ${TEST_LOCATION} ]]; then
-        __print_title_header "Running all tests in folder" "
-                Folder Location:
-                    ${TEST_LOCATION}
-        ";
-        run_all_collections_in_location "${TEST_LOCATION}";
-        echo
-        exit 0;
-    fi
+    # Select a single collection to run from a list
+    select_from_list;
 fi
-
-
-# Select a single collection to run from a list
-select_from_list;
