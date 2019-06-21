@@ -140,7 +140,7 @@ function __print_stage_success_done {
     echo -ne "${CNORM}";
 }
 
-function __throw_exception {
+function __print_error {
     # TODO: Add TC syntax to here also
     echo
     echo -ne "${CLRED}";
@@ -155,6 +155,10 @@ function __throw_exception {
     echo "|                                                              |"
     echo "+--------------------------------------------------------------+"
     echo -ne "${CNORM}";
+}
+
+function __throw_exception {
+    __print_error "$@"
     echo
     exit 1;
 }
@@ -346,10 +350,15 @@ newman_run() {
     if [[ ! $res -eq 0 ]]; then
         if [[ ${EXIT_ON_FAIL} == 'true' ]]; then
             __test_command_result $res "Newman test failed - ${collection_name}";
+        else
+            __print_error "Newman test failed - ${collection_name}";
         fi
+    else
+        __print_stage_success_done;
     fi
     cd ${cwd};
-    __print_stage_success_done;
+
+    return $res;
 }
 
 run_single_collection() {
@@ -375,6 +384,7 @@ run_single_collection() {
     fi
 
     # Execute tests
+    echo newman_run "${collection_path}" "${command_args}";
     newman_run "${collection_path}" "${command_args}";
     echo
 }
@@ -390,6 +400,8 @@ run_all_collections_in_location() {
     # Init the database as per this collections category's newman_group config (also clean if required)
     newman_group_config_file=${dir_name}/newman_group.config.json
     configure_testdata "${newman_group_config_file}";
+
+    exit_status=0
 
     # Execute tests in order:
     # If a collections_cfg.json file exists, read the order form that file
@@ -411,9 +423,17 @@ run_all_collections_in_location() {
         # Execute tests
         echo newman_run "${collection_path}" "${command_args}";
         newman_run "${collection_path}" "${command_args}";
+        res=$?
+
+        if [ $res -ne 0 ]; then
+            exit_status=$res;
+        fi
+
         echo
     done
     echo
+
+    return $exit_status;
 }
 
 select_from_list() {
@@ -460,8 +480,6 @@ select_from_list() {
                 ${TEST_LOCATION}
     ";
     run_single_collection "${TEST_LOCATION}";
-    echo
-    exit 0;
 }
 
 
@@ -525,33 +543,35 @@ if [[ ${RUN_ALL} ]]; then
     __print_title_header "Running all tests" "
                 Groups:${all_test_groups}
     ";
+
+    has_failed=0
+
     for collection_path in ${all_test_groups}; do
         # Run this collection group together
         run_all_collections_in_location "${NT_NEWMAN_GROUPS_PATH}/${collection_path}";
+        res=$?
+
+        if [ $res -ne 0 ]; then
+            has_failed=$res
+        fi
     done
-    echo
-    exit 0;
+
+    if [ $has_failed -ne 0 ]; then
+        __throw_exception "At least one test failed. Check logs."
+    fi
+elif [[ -f ${TEST_LOCATION} ]]; then
+    __print_title_header "Running single test collection" "
+            Collection File:
+                ${TEST_LOCATION}
+    ";
+    run_single_collection "${TEST_LOCATION}";
+elif [[ -d ${TEST_LOCATION} ]]; then
+    __print_title_header "Running all tests in folder" "
+            Folder Location:
+                ${TEST_LOCATION}
+    ";
+    run_all_collections_in_location "${TEST_LOCATION}";
 else
-    if [[ -f ${TEST_LOCATION} ]]; then
-        __print_title_header "Running single test collection" "
-                Collection File:
-                    ${TEST_LOCATION}
-        ";
-        run_single_collection "${TEST_LOCATION}";
-        echo
-        exit 0;
-    fi
-    if [[ -d ${TEST_LOCATION} ]]; then
-        __print_title_header "Running all tests in folder" "
-                Folder Location:
-                    ${TEST_LOCATION}
-        ";
-        run_all_collections_in_location "${TEST_LOCATION}";
-        echo
-        exit 0;
-    fi
+    # Select a single collection to run from a list
+    select_from_list;
 fi
-
-
-# Select a single collection to run from a list
-select_from_list;
